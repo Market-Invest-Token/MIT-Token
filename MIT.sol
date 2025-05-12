@@ -10,87 +10,99 @@ interface IUniswapV2Factory {
     function createPair(address tokenA, address tokenB) external returns (address);
 }
 
-contract MarketInvestToken {
-    // =================== INFORMAÇÕES BÁSICAS ===================
-    string public constant name = "Market Invest Token";
-    string public constant symbol = "MIT";
-    uint8 public constant decimals = 18;
-    uint256 public totalSupply = 50_000_000_000 * 10**decimals;
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address to, uint256 amount) external returns (bool);
+    function allowance(address owner, address spender) external view returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
 
-    // =================== SALDOS E PERMISSÕES ===================
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+}
+
+contract MarketInvestToken is IERC20 {
+    string private constant _name = "Market Invest Token";
+    string private constant _symbol = "MIT";
+    uint8 private constant _decimals = 18;
+    uint256 private _totalSupply = 50_000_000_000 * 10**_decimals;
+
     mapping(address => uint256) private balances;
     mapping(address => mapping(address => uint256)) private allowances;
 
-    // =================== CONFIGURAÇÕES DE TAXAS ===================
-    uint256 public constant transferFee = 30; // 0.3%
-    uint256 public constant tradeFee = 50;    // 0.5%
-    uint256 public constant burnFee = 20;     // 0.2%
+    uint256 public constant transferFee = 30;
+    uint256 public constant tradeFee = 50;
+    uint256 public constant burnFee = 5; // 0.05%
     address public constant feeWallet = 0x77165FaC7BeF09d3D6a4e7f217EE3784D857F8Ef;
 
-    // =================== LIQUIDEZ E DESBLOQUEIO ===================
     address public liquidityPool;
     address public immutable owner;
     uint256 public circulatingSupply;
-    uint256 public lockedSupply = 34_000_000_000 * 10**decimals;
+    uint256 public lockedSupply = 34_000_000_000 * 10**_decimals;
 
-    // =================== CONTROLE DO TEMPO DE LIQUIDEZ ===================
     uint256 public cycleStart;
     bool public isLiquidityUnlocked;
 
-    // =================== EVENTOS ===================
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event TokensUnlocked(uint256 amount);
-
-    // =================== CONSTRUTOR ===================
     constructor() {
         owner = msg.sender;
 
-        // DISTRIBUIÇÃO INICIAL
-        _transferNoFee(address(0), msg.sender, 5_000_000_000 * 10**decimals); // Criador
-        _transferNoFee(address(0), msg.sender, 1_000_000_000 * 10**decimals); // Investidor
-        _transferNoFee(address(0), msg.sender, 10_000_000_000 * 10**decimals); // Liquidez
+        _transferNoFee(address(0), msg.sender, 5_000_000_000 * 10**_decimals);
+        _transferNoFee(address(0), msg.sender, 1_000_000_000 * 10**_decimals);
+        _transferNoFee(address(0), msg.sender, 10_000_000_000 * 10**_decimals);
 
-        circulatingSupply = 16_000_000_000 * 10**decimals;
+        circulatingSupply = 16_000_000_000 * 10**_decimals;
         cycleStart = block.timestamp;
     }
 
-    // =================== FUNÇÕES PADRÃO ERC20 ===================
-    function balanceOf(address account) public view returns (uint256) {
+    function name() public pure returns (string memory) {
+        return _name;
+    }
+
+    function symbol() public pure returns (string memory) {
+        return _symbol;
+    }
+
+    function decimals() public pure returns (uint8) {
+        return _decimals;
+    }
+
+    function totalSupply() public view override returns (uint256) {
+        return _totalSupply;
+    }
+
+    function balanceOf(address account) public view override returns (uint256) {
         return balances[account];
     }
 
-    function allowance(address owner_, address spender) public view returns (uint256) {
+    function allowance(address owner_, address spender) public view override returns (uint256) {
         return allowances[owner_][spender];
     }
 
-    function approve(address spender, uint256 amount) public returns (bool) {
+    function approve(address spender, uint256 amount) public override returns (bool) {
         allowances[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);
         return true;
     }
 
-    // TRANSFERÊNCIA PADRÃO COM TAXAS
-    function transfer(address to, uint256 amount) public returns (bool) {
+    function transfer(address to, uint256 amount) public override returns (bool) {
         _transfer(msg.sender, to, amount);
         return true;
     }
 
-    // TRANSFERÊNCIA USANDO ALLOWANCE
-    function transferFrom(address from, address to, uint256 amount) public returns (bool) {
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
         require(allowances[from][msg.sender] >= amount, "Allowance exceeded");
         allowances[from][msg.sender] -= amount;
         _transfer(from, to, amount);
         return true;
     }
 
-    // =================== TRANSFERÊNCIA COM LÓGICA DE TAXAS ===================
     function _transfer(address from, address to, uint256 amount) private {
         require(balances[from] >= amount, "Saldo insuficiente");
 
         bool isTrade = (from == liquidityPool || to == liquidityPool);
         uint256 fee = isTrade ? tradeFee : transferFee;
-        
+
         uint256 feeAmount = (amount * fee) / 10000;
         uint256 burnAmount = (amount * burnFee) / 10000;
         uint256 transferAmount = amount - feeAmount - burnAmount;
@@ -98,7 +110,7 @@ contract MarketInvestToken {
         balances[from] -= amount;
         balances[to] += transferAmount;
         balances[feeWallet] += feeAmount;
-        totalSupply -= burnAmount;
+        _totalSupply -= burnAmount;
 
         emit Transfer(from, to, transferAmount);
         emit Transfer(from, feeWallet, feeAmount);
@@ -108,22 +120,19 @@ contract MarketInvestToken {
         _checkLiquidityCycle();
     }
 
-    // TRANSFERÊNCIA SEM TAXA (apenas no deploy inicial)
     function _transferNoFee(address from, address to, uint256 amount) private {
         balances[to] += amount;
         emit Transfer(from, to, amount);
     }
 
-    // =================== LIBERAÇÃO AUTOMÁTICA DE TOKENS ===================
     function _tryUnlockMore() private {
         if (lockedSupply == 0) return;
 
         uint256 expectedInMarket = circulatingSupply;
         uint256 totalHeld = balances[owner] + balances[feeWallet];
 
-        // Verifica se 90% dos tokens circulantes já foram comprados
         if (totalHeld <= expectedInMarket * 10 / 100) {
-            uint256 unlockAmount = 3_000_000_000 * 10**decimals;
+            uint256 unlockAmount = 3_000_000_000 * 10**_decimals;
             if (unlockAmount > lockedSupply) {
                 unlockAmount = lockedSupply;
             }
@@ -132,11 +141,10 @@ contract MarketInvestToken {
             circulatingSupply += unlockAmount;
             lockedSupply -= unlockAmount;
 
-            emit TokensUnlocked(unlockAmount);
+            emit Transfer(address(0), owner, unlockAmount);
         }
     }
 
-    // =================== CICLO DE LIQUIDEZ AUTOMÁTICO ===================
     function _checkLiquidityCycle() private {
         uint256 elapsed = block.timestamp - cycleStart;
 
@@ -152,13 +160,8 @@ contract MarketInvestToken {
         return isLiquidityUnlocked;
     }
 
-    // =================== CRIAÇÃO DE PAR NA DEX (EXTERNO) ===================
     function setLiquidityPool(address _lp) external {
         require(msg.sender == owner && liquidityPool == address(0), "Liquidity already set or not authorized");
-
         liquidityPool = _lp;
     }
-
-    // =================== BLOQUEIO DE MODIFICAÇÕES ===================
-    // Nenhuma função que permita alterar taxas, mint, burn, ou ownership
 }
